@@ -141,19 +141,28 @@ function MapLibreContainer({
       if (!lat || !lng) return;
 
       const evalRes = evaluateTransformerRightsizing(tr);
-      if (!evalRes.isEligible) return;
+      const isSearched = Boolean(mapSearchQuery.trim() && (
+        tr.trCode.toLowerCase().includes(mapSearchQuery.toLowerCase().trim()) ||
+        tr.trCode.replace(/-/g, '').includes(mapSearchQuery.replace(/-/g, '').toLowerCase().trim())
+      ));
+
+      if (!evalRes.isEligible && !isSearched) return;
 
       // Custom Pin Marker Element (separated container from visual pin to prevent transform overrides)
       const el = document.createElement('div');
       el.className = 'custom-map-marker-container';
+
+      const isOverloaded = tr.year3LoadPct > 80;
+      const bgColor = evalRes.isEligible ? '#059669' : (isOverloaded ? '#e11d48' : '#2563eb');
+      const borderColor = evalRes.isEligible ? '#047857' : (isOverloaded ? '#be123c' : '#1d4ed8');
 
       const pinInner = document.createElement('div');
       pinInner.className = 'custom-map-marker-pin';
       pinInner.style.width = '34px';
       pinInner.style.height = '34px';
       pinInner.style.borderRadius = '50%';
-      pinInner.style.backgroundColor = '#059669';
-      pinInner.style.border = '2px solid #047857';
+      pinInner.style.backgroundColor = bgColor;
+      pinInner.style.border = `2px solid ${borderColor}`;
       pinInner.style.color = '#ffffff';
       pinInner.style.display = 'flex';
       pinInner.style.alignItems = 'center';
@@ -181,14 +190,18 @@ function MapLibreContainer({
       const currentLoad = format2Decimals(tr.year3LoadPct);
       const newLoad = evalRes.newLoadPct != null ? format2Decimals(evalRes.newLoadPct) : '-';
 
+      const tagHtml = evalRes.isEligible
+        ? `<span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">เข้าเกณฑ์ Rightsizing</span>`
+        : (isOverloaded
+            ? `<span class="text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">หม้อแปลงโหลดเกิน (&gt;80%)</span>`
+            : `<span class="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">หม้อแปลงปกติ</span>`);
+
       const popupNode = document.createElement('div');
       popupNode.className = 'p-1 text-slate-800 font-sans min-w-[240px]';
       popupNode.innerHTML = `
         <div class="border-b border-slate-100 pb-2 mb-2">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-              เข้าเกณฑ์ Rightsizing
-            </span>
+            ${tagHtml}
             <span class="text-[10px] text-slate-500 font-mono font-semibold">${tr.feaOffice}</span>
           </div>
           <h4 class="text-sm font-bold text-slate-900 mt-1 flex items-center gap-1.5">
@@ -203,8 +216,9 @@ function MapLibreContainer({
           <div class="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200">
             <span class="text-slate-600 text-[11px]">ขนาดพิกัด (kVA):</span>
             <span class="font-bold text-slate-800 font-mono flex items-center gap-1">
-              <span class="text-slate-400 line-through">${tr.ratedKva} kVA</span>
-              <span class="text-emerald-700 font-extrabold">➔ ${recommendedKva} kVA</span>
+              ${evalRes.isEligible
+                ? `<span class="text-slate-400 line-through">${tr.ratedKva} kVA</span><span class="text-emerald-700 font-extrabold">➔ ${recommendedKva} kVA</span>`
+                : `<span class="text-rose-700 font-extrabold">${tr.ratedKva} kVA</span>`}
             </span>
           </div>
 
@@ -213,17 +227,17 @@ function MapLibreContainer({
               <div class="text-[10px] text-amber-800 font-semibold">โหลดปัจจุบัน</div>
               <div class="text-xs font-bold text-amber-900 font-mono mt-0.5">${currentLoad}%</div>
             </div>
-            <div class="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
-              <div class="text-[10px] text-emerald-800 font-semibold">โหลดใหม่ (&lt;50%)</div>
-              <div class="text-xs font-bold text-emerald-900 font-mono mt-0.5">${newLoad}%</div>
+            <div class="${evalRes.isEligible ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'} p-2 rounded-lg border">
+              <div class="text-[10px] ${evalRes.isEligible ? 'text-emerald-800' : 'text-slate-600'} font-semibold">% โหลดใหม่</div>
+              <div class="text-xs font-bold ${evalRes.isEligible ? 'text-emerald-900' : 'text-slate-700'} font-mono mt-0.5">${evalRes.isEligible ? `${newLoad}%` : '-'}</div>
             </div>
           </div>
 
           ${tr.location ? `<div class="text-[10px] text-slate-500 truncate pt-0.5">📍 ${tr.location}</div>` : ''}
         </div>
 
-        <button type="button" class="mt-2.5 w-full py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium text-xs rounded-md shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer select-btn">
-          <span>ดูรายละเอียด / จำลองการลดขนาด</span>
+        <button type="button" class="mt-2.5 w-full py-1.5 px-3 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white font-medium text-xs rounded-md shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer select-btn">
+          <span>ดูรายละเอียดหม้อแปลง</span>
           <span>➔</span>
         </button>
       `;
@@ -2215,7 +2229,29 @@ export default function App() {
                             <div className="text-[10px] text-rose-600 font-sans font-medium">โหลดใหม่ {format2Decimals(sourceEval.newLoadPct)}%</div>
                           </td>
                           <td className="py-3 px-3 font-mono font-bold text-rose-700 text-xs whitespace-nowrap bg-rose-50/30">
-                            {targetTr.trCode}
+                            <button
+                              onClick={() => {
+                                setMapOffice(targetTr.feaOffice);
+                                setMapRating('all');
+                                setMapSearchQuery(targetTr.trCode);
+
+                                const lat = (targetTr as any).latitude;
+                                const lng = (targetTr as any).longitude;
+                                if (lat && lng && !isNaN(Number(lat)) && !isNaN(Number(lng))) {
+                                  setMapCenter({ lat: Number(lat), lng: Number(lng) });
+                                  setMapZoom(16);
+                                } else {
+                                  setMapCenter({ lat: 6.845, lng: 101.233 });
+                                  setMapZoom(12);
+                                }
+                                setActiveTab('map');
+                              }}
+                              className="inline-flex items-center gap-1.5 text-rose-700 hover:text-rose-900 hover:underline cursor-pointer group"
+                              title="กดเพื่อดูตำแหน่งพิกัดหม้อแปลงปลายทางบนแผนที่"
+                            >
+                              <span>{targetTr.trCode}</span>
+                              <ExternalLink className="w-3.5 h-3.5 text-rose-500 group-hover:text-rose-800 transition-colors" />
+                            </button>
                           </td>
                           <td className="py-3 px-3 text-center font-mono text-xs font-bold text-rose-600 whitespace-nowrap bg-rose-50/30">
                             {targetTr.ratedKva}
