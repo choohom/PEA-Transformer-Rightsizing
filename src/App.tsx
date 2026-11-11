@@ -446,13 +446,34 @@ export default function App() {
     return stats.eligibleList.slice(start, start + ALERT_ITEMS_PER_PAGE);
   }, [stats.eligibleList, alertPage]);
 
+  // States for TR Matching dynamic threshold limit (<40%, <50%, <60%)
+  const [matchMaxLoadThreshold, setMatchMaxLoadThreshold] = useState<number>(50);
+
+  // Helper function to verify if new load percentage falls into the selected threshold range
+  // - 60: 50% - 60%
+  // - 50: 40% - 49.99%
+  // - 40: 30% - 39.99%
+  const isInMatchLoadRange = (loadPct: number, threshold: number): boolean => {
+    if (threshold === 60) {
+      return loadPct >= 50 && loadPct <= 60;
+    }
+    if (threshold === 50) {
+      return loadPct >= 40 && loadPct < 50;
+    }
+    if (threshold === 40) {
+      return loadPct >= 30 && loadPct < 40;
+    }
+    return loadPct <= threshold;
+  };
+
   // Compute TR Matching pairs: matching eligible rightsizing transformers with overloaded transformers (>80% load) in the same office
   // Conditions:
   // 1. targetTr.ratedKva MUST equal sourceEval.recommendedKva (พิกัดเดิมของปลายทางตรงกับพิกัดที่แนะนำของต้นทาง)
-  // 2. เมื่อจับคู่กันแล้ว % โหลดใหม่ทั้ง 2 เครื่อง ต้องน้อยกว่า 50% (< 50%):
-  //    - เครื่องต้นทาง: sourceEval.newLoadPct < 50
-  //    - เครื่องปลายทาง: targetNewLoadPct = (targetActualKva / sourceTr.ratedKva) * 100 < 50
-  // 3. จัดลำดับเลือกหม้อแปลงปลายทางที่มีโหลดมากสุดเป็นอันดับแรก
+  // 2. เมื่อจับคู่กันแล้ว % โหลดใหม่ทั้ง 2 เครื่อง ต้องอยู่ในช่วงที่เลือก:
+  //    - ปุ่ม <60%: ช่วง 50 - 60%
+  //    - ปุ่ม <50%: ช่วง 40 - 49.99%
+  //    - ปุ่ม <40%: ช่วง 30 - 39.99%
+  // 3. จัดลำดับเลือกหม้อแปลงปลายทางที่มีระยะห่างใกล้สุดเป็นอันดับแรก
   const trMatches = useMemo(() => {
     const matches: {
       office: string;
@@ -466,12 +487,12 @@ export default function App() {
     const officeMap = new Map<string, { eligible: { tr: TransformerRecord; evalRes: any }[]; overloaded: TransformerRecord[] }>();
 
     transformers.forEach(tr => {
-      const evalRes = evaluateTransformerRightsizing(tr);
+      const evalRes = evaluateTransformerRightsizing(tr, matchMaxLoadThreshold);
       if (!officeMap.has(tr.feaOffice)) {
         officeMap.set(tr.feaOffice, { eligible: [], overloaded: [] });
       }
       const entry = officeMap.get(tr.feaOffice)!;
-      if (evalRes.isEligible && (evalRes.newLoadPct ?? 100) < 50) {
+      if (evalRes.isEligible && isInMatchLoadRange(evalRes.newLoadPct ?? 100, matchMaxLoadThreshold)) {
         entry.eligible.push({ tr, evalRes });
       }
       if (tr.year3LoadPct > 80) {
@@ -506,7 +527,7 @@ export default function App() {
         // 1. targetTr.ratedKva === recommendedKva
         // 2. not used yet
         // 3. targetTr.id !== sourceTr.id
-        // 4. when paired, % new load of target machine < 50%
+        // 4. when paired, % new load of target machine falls into matchMaxLoadThreshold range
         const candidates = data.overloaded
           .filter(t => {
             if (t.ratedKva !== recommendedKva) return false;
@@ -515,7 +536,7 @@ export default function App() {
 
             const targetActualKva = (t.year3LoadPct / 100) * t.ratedKva;
             const newTargetLoad = (targetActualKva / sourceTr.ratedKva) * 100;
-            return newTargetLoad < 50;
+            return isInMatchLoadRange(newTargetLoad, matchMaxLoadThreshold);
           })
           .map(t => {
             const dist = calculateDistanceKm(
@@ -558,7 +579,7 @@ export default function App() {
     });
 
     return matches;
-  }, [transformers]);
+  }, [transformers, matchMaxLoadThreshold]);
 
   // Breakdown of TR matches by rating
   const matchStatsByRating = useMemo(() => {
@@ -635,7 +656,7 @@ export default function App() {
 
   useEffect(() => {
     setMatchPage(1);
-  }, [matchSearchQuery, matchOffice, matchRating]);
+  }, [matchSearchQuery, matchOffice, matchRating, matchMaxLoadThreshold]);
 
   useEffect(() => {
     setDbPage(1);
@@ -2032,7 +2053,12 @@ export default function App() {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">การจับคู่หม้อแปลงเข้าเกณฑ์ลดขนาดกับหม้อแปลงโหลดเกิน (&gt;80%)</h2>
                 <p className="text-xs text-slate-500">
-                  นำหม้อแปลงที่เข้าเกณฑ์ปรับลดขนาด (Rightsizing) ไปจับคู่กับหม้อแปลงที่มีภาระโหลดปีปัจจุบันเกิน 80% ภายในสังกัด กฟฟ. เดียวกัน โดยคัดเลือกหม้อแปลงปลายทางที่อยู่ใกล้ที่สุดเป็นอันดับแรก และเมื่อจับคู่กันแล้ว % โหลดใหม่ทั้ง 2 เครื่องต้องน้อยกว่า 50%
+                  นำหม้อแปลงที่เข้าเกณฑ์ปรับลดขนาด (Rightsizing) ไปจับคู่กับหม้อแปลงที่มีภาระโหลดปีปัจจุบันเกิน 80% ภายในสังกัด กฟฟ. เดียวกัน โดยคัดเลือกหม้อแปลงปลายทางที่อยู่ใกล้ที่สุดเป็นอันดับแรก และเมื่อจับคู่กันแล้ว % โหลดใหม่ทั้ง 2 เครื่องต้องอยู่ในช่วง{' '}
+                  <span className="font-bold text-indigo-700 font-mono">
+                    {matchMaxLoadThreshold === 60 && '50 - 60%'}
+                    {matchMaxLoadThreshold === 50 && '40 - 49.99%'}
+                    {matchMaxLoadThreshold === 40 && '30 - 39.99%'}
+                  </span>
                 </p>
               </div>
             </div>
@@ -2048,6 +2074,27 @@ export default function App() {
                     onChange={(e) => setMatchSearchQuery(e.target.value)}
                     className="w-full pl-9 pr-4 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500"
                   />
+                </div>
+
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                  <span className="text-[11px] font-semibold text-slate-600 px-1.5">เกณฑ์ % โหลดใหม่:</span>
+                  {[
+                    { val: 60, label: '< 60%' },
+                    { val: 50, label: '< 50%' },
+                    { val: 40, label: '< 40%' }
+                  ].map((item) => (
+                    <button
+                      key={item.val}
+                      onClick={() => setMatchMaxLoadThreshold(item.val)}
+                      className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                        matchMaxLoadThreshold === item.val
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
 
                 <select
@@ -2073,12 +2120,13 @@ export default function App() {
                   <option value="250">พิกัด 250 kVA</option>
                 </select>
 
-                {(matchSearchQuery || matchOffice !== 'all' || matchRating !== 'all') && (
+                {(matchSearchQuery || matchOffice !== 'all' || matchRating !== 'all' || matchMaxLoadThreshold !== 50) && (
                   <button
                     onClick={() => {
                       setMatchSearchQuery('');
                       setMatchOffice('all');
                       setMatchRating('all');
+                      setMatchMaxLoadThreshold(50);
                     }}
                     className="text-xs text-rose-600 hover:text-rose-700 font-medium cursor-pointer"
                   >
@@ -2396,7 +2444,7 @@ export default function App() {
                       <strong className="text-slate-900 font-mono text-base">{selectedTransformer.trCode}</strong>
                     </div>
                     <div>
-                      <span className="text-xs text-slate-500 block">สังกัด กฟฟ. (คอลัมน์ AG)</span>
+                      <span className="text-xs text-slate-500 block">สังกัด กฟฟ.</span>
                       <strong className="text-slate-900">{selectedTransformer.feaOffice}</strong>
                     </div>
                     <div>
@@ -2513,7 +2561,7 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">สังกัด กฟฟ. (คอลัมน์ AG)</label>
+                  <label className="block font-semibold text-slate-700 mb-1">สังกัด กฟฟ.</label>
                   <select
                     value={newTr.feaOffice}
                     onChange={(e) => setNewTr({ ...newTr, feaOffice: e.target.value })}

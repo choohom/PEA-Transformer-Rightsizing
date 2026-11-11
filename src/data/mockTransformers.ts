@@ -197,7 +197,7 @@ export interface RightsizingEvaluation {
   reason: string;
 }
 
-export function evaluateTransformerRightsizing(tr: TransformerRecord): RightsizingEvaluation {
+export function evaluateTransformerRightsizing(tr: TransformerRecord, maxNewLoadPct = 50): RightsizingEvaluation {
   // เงื่อนไขยกเว้น: ไม่เอาหม้อแปลงที่สถานที่ติดตั้ง มีคำว่า "จัดสรร", "หมู่บ้าน", "โครงการ", "สถานีอัดประจุ" หรือ "EV" เข้ามาคำนวณในระบบนี้
   if (tr.location) {
     const locUpper = tr.location.toUpperCase();
@@ -250,16 +250,8 @@ export function evaluateTransformerRightsizing(tr: TransformerRecord): Rightsizi
   }
 
   // คำนวณโหลดของปีปัจจุบัน (kVA):
-  // ของหม้อแปลง 100 kVA ให้เอาโหลดปีปัจจุบัน หารด้วย 100 คูณด้วย 100 จะได้เป็นโหลด
-  // สูตรทั่วไป: (โหลดปีปัจจุบัน / 100) * พิกัดเดิม
-  // เช่น PEA หม้อแปลง 56-014418 พิกัดเดิม 100 kVA โหลดปีปัจจุบัน 15.08%
-  // -> (15.08 / 100) * 100 = 15.08 kVA
   const currentLoadKva = Number(((tr.year3LoadPct / 100) * tr.ratedKva).toFixed(2));
 
-  // กำหนดพิกัดหม้อแปลงที่แนะนำสำหรับลดขนาด:
-  // - 100 kVA -> แนะนำลดเป็น 50 kVA
-  // - 160 kVA -> แนะนำลดเป็น 50 kVA หรือ 100 kVA (ขนาดที่ได้ % โหลดใหม่ < 50%)
-  // - 250 kVA -> แนะนำลดเป็น 50 kVA, 100 kVA หรือ 160 kVA (ขนาดที่ได้ % โหลดใหม่ < 50%)
   let candidateSizes: number[] = [];
   if (tr.ratedKva === 100) {
     candidateSizes = [50];
@@ -273,10 +265,8 @@ export function evaluateTransformerRightsizing(tr: TransformerRecord): Rightsizi
   let bestNewLoadPct: number | null = null;
 
   for (const candidate of candidateSizes) {
-    // เอาโหลดหารด้วยพิกัดหม้อแปลงที่แนะนำ คูณด้วย 100
-    // เช่น 15.08 / 50 * 100 = 30.16%
     const newLoad = (currentLoadKva / candidate) * 100;
-    if (newLoad < 50) {
+    if (newLoad < maxNewLoadPct) {
       bestRecommendedKva = candidate;
       bestNewLoadPct = Number(newLoad.toFixed(2));
       break;
@@ -290,7 +280,7 @@ export function evaluateTransformerRightsizing(tr: TransformerRecord): Rightsizi
       recommendedKva: null,
       newLoadPct: null,
       currentLoadKva,
-      reason: `โหลด 3 ปีย้อนหลัง < 30% แต่เมื่อคำนวณ % โหลดใหม่จากโหลดปีปัจจุบัน (${tr.year3LoadPct.toFixed(2)}%) แล้วมีค่า >= 50%`
+      reason: `โหลด 3 ปีย้อนหลัง < 30% แต่เมื่อคำนวณ % โหลดใหม่จากโหลดปีปัจจุบัน (${tr.year3LoadPct.toFixed(2)}%) แล้วมีค่า >= ${maxNewLoadPct}%`
     };
   }
 
