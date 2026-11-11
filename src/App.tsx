@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Zap, 
   AlertTriangle, 
@@ -29,7 +29,8 @@ import {
   Calculator,
   Shuffle
 } from 'lucide-react';
-import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { TransformerRecord, PEA_OFFICES, generateInitialTransformers, evaluateTransformerRightsizing, formatPeaTransformerCode } from './data/mockTransformers';
 import { exportTransformersToExcel, exportTRMatchingToExcel } from './utils/exportExcel';
 import { parseCsvRows } from './utils/csvParser';
@@ -55,6 +56,132 @@ export const format2Decimals = (val: number | string | null | undefined): string
   if (isNaN(num)) return '-';
   return num.toFixed(2);
 };
+
+interface MapLibreContainerProps {
+  center: { lat: number; lng: number };
+  zoom: number;
+  transformers: TransformerRecord[];
+  mapOffice: string;
+  mapRating: string;
+  mapSearchQuery: string;
+  onSelectTransformer: (tr: TransformerRecord) => void;
+}
+
+function MapLibreContainer({
+  center,
+  zoom,
+  transformers,
+  mapOffice,
+  mapRating,
+  mapSearchQuery,
+  onSelectTransformer
+}: MapLibreContainerProps) {
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [center.lng, center.lat],
+      zoom: zoom,
+    });
+
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    mapRef.current = map;
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  // Update Center & Zoom when search or office selection changes
+  useEffect(() => {
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: [center.lng, center.lat],
+        zoom: zoom,
+        essential: true,
+      });
+    }
+  }, [center.lat, center.lng, zoom]);
+
+  // Update Markers
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Remove existing markers
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+
+    // Add markers for eligible transformers
+    transformers.forEach(tr => {
+      if (mapOffice !== 'all' && tr.feaOffice !== mapOffice) return;
+      if (mapRating !== 'all' && tr.ratedKva !== Number(mapRating)) return;
+      if (mapSearchQuery.trim()) {
+        const q = mapSearchQuery.toLowerCase().trim();
+        const matchCode = tr.trCode.toLowerCase().includes(q);
+        const matchOffice = tr.feaOffice.toLowerCase().includes(q);
+        const matchLoc = (tr.location || '').toLowerCase().includes(q);
+        const matchRaw = tr.trCode.replace(/-/g, '').includes(q.replace(/-/g, ''));
+        if (!matchCode && !matchOffice && !matchLoc && !matchRaw) return;
+      }
+
+      const lat = (tr as any).latitude;
+      const lng = (tr as any).longitude;
+      if (!lat || !lng) return;
+
+      const evalRes = evaluateTransformerRightsizing(tr);
+      if (!evalRes.isEligible) return;
+
+      // Custom Pin Marker Element
+      const el = document.createElement('div');
+      el.className = 'custom-map-marker group';
+      el.style.width = '34px';
+      el.style.height = '34px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = '#059669';
+      el.style.border = '2px solid #047857';
+      el.style.color = '#ffffff';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+      el.style.fontSize = '11px';
+      el.style.fontWeight = 'bold';
+      el.style.fontFamily = 'monospace';
+      el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.25)';
+      el.style.cursor = 'pointer';
+      el.style.transition = 'transform 0.15s ease-in-out';
+      el.title = `PEA: ${tr.trCode} (${tr.ratedKva} kVA) - ${tr.feaOffice}`;
+      el.innerText = `${tr.ratedKva}`;
+
+      el.addEventListener('mouseenter', () => {
+        el.style.transform = 'scale(1.25)';
+      });
+      el.addEventListener('mouseleave', () => {
+        el.style.transform = 'scale(1)';
+      });
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onSelectTransformer(tr);
+      });
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .addTo(map);
+
+      markersRef.current.push(marker);
+    });
+  }, [transformers, mapOffice, mapRating, mapSearchQuery, onSelectTransformer]);
+
+  return <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} className="rounded-xl overflow-hidden shadow-inner border border-slate-200" />;
+}
 
 export default function App() {
   const [transformers, setTransformers] = useState<TransformerRecord[]>([]);
@@ -2108,52 +2235,15 @@ export default function App() {
 
             <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-xs">
               <div style={{ height: '650px', width: '100%' }}>
-                <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''}>
-                  <GoogleMap
-                    key={`${mapCenter.lat}_${mapCenter.lng}_${mapZoom}`}
-                    defaultCenter={mapCenter}
-                    defaultZoom={mapZoom}
-                    mapId="DEMO_MAP_ID"
-                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                  >
-                    {transformers.map((tr) => {
-                      if (mapOffice !== 'all' && tr.feaOffice !== mapOffice) return null;
-                      if (mapRating !== 'all' && tr.ratedKva !== Number(mapRating)) return null;
-                      if (mapSearchQuery.trim()) {
-                        const q = mapSearchQuery.toLowerCase().trim();
-                        const matchCode = tr.trCode.toLowerCase().includes(q);
-                        const matchOffice = tr.feaOffice.toLowerCase().includes(q);
-                        const matchLoc = (tr.location || '').toLowerCase().includes(q);
-                        const matchRaw = tr.trCode.replace(/-/g, '').includes(q.replace(/-/g, ''));
-                        if (!matchCode && !matchOffice && !matchLoc && !matchRaw) return null;
-                      }
-
-                      const lat = (tr as any).latitude;
-                      const lng = (tr as any).longitude;
-                      if (!lat || !lng) return null;
-                      const evalRes = evaluateTransformerRightsizing(tr);
-                      if (!evalRes.isEligible) return null;
-                      const isEligible = evalRes.isEligible;
-                      return (
-                        <AdvancedMarker 
-                          key={tr.id} 
-                          position={{ lat, lng }}
-                          onClick={() => setSelectedTransformer(tr)}
-                          title={`PEA: ${tr.trCode} (${tr.ratedKva} kVA) - ${tr.feaOffice}`}
-                        >
-                          <Pin 
-                            background={isEligible ? '#059669' : '#e11d48'} 
-                            glyphColor={'#fff'} 
-                            borderColor={isEligible ? '#047857' : '#be123c'} 
-                            scale={1.2}
-                          >
-                            <span style={{ fontSize: '10px', fontWeight: 'bold', color: 'white' }}>{tr.ratedKva}</span>
-                          </Pin>
-                        </AdvancedMarker>
-                      );
-                    })}
-                  </GoogleMap>
-                </APIProvider>
+                <MapLibreContainer
+                  center={mapCenter}
+                  zoom={mapZoom}
+                  transformers={transformers}
+                  mapOffice={mapOffice}
+                  mapRating={mapRating}
+                  mapSearchQuery={mapSearchQuery}
+                  onSelectTransformer={setSelectedTransformer}
+                />
               </div>
             </div>
           </div>
