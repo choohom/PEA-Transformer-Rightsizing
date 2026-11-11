@@ -573,6 +573,35 @@ export default function App() {
     return { m100, m160, m250, total: trMatches.length };
   }, [trMatches]);
 
+  // Sorted 34 PEA offices by number of eligible transformers descending (มากสุดไปน้อยสุด จากซ้ายไปขวา)
+  const sortedPeaOffices = useMemo(() => {
+    const list = peaOffices.map(office => {
+      const officeTrs = transformers.filter(t => t.feaOffice === office);
+      const eligibleOfficeTrs = officeTrs.filter(t => evaluateTransformerRightsizing(t).isEligible);
+      const pct = officeTrs.length > 0 ? Math.round((eligibleOfficeTrs.length / officeTrs.length) * 100) : 0;
+      return {
+        office,
+        officeTrs,
+        eligibleOfficeTrs,
+        eligibleCount: eligibleOfficeTrs.length,
+        totalCount: officeTrs.length,
+        pct
+      };
+    });
+
+    list.sort((a, b) => {
+      if (b.eligibleCount !== a.eligibleCount) {
+        return b.eligibleCount - a.eligibleCount; // เรียงตามจำนวนที่เข้าเกณฑ์ปรับลดจากมากไปน้อย
+      }
+      if (b.totalCount !== a.totalCount) {
+        return b.totalCount - a.totalCount; // ถ้าเท่ากัน เรียงตามจำนวนรวม
+      }
+      return a.office.localeCompare(b.office, 'th');
+    });
+
+    return list;
+  }, [peaOffices, transformers]);
+
   // States for TR Matching Search & Filter
   const [matchSearchQuery, setMatchSearchQuery] = useState<string>('');
   const [matchOffice, setMatchOffice] = useState<string>('all');
@@ -1829,16 +1858,12 @@ export default function App() {
             <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-xs">
               <h2 className="text-lg font-bold text-slate-900">สรุปผลการวิเคราะห์จำแนกราย 34 กฟฟ. (การไฟฟ้าส่วนภูมิภาค)</h2>
               <p className="text-xs text-slate-500">
-                ภาพรวมสถิติจำนวนหม้อแปลง 100, 160, 250 kVA ที่เข้าเกณฑ์ปรับลดขนาดในแต่ละสังกัด กฟฟ.
+                จัดเรียงลำดับ กฟฟ. ตามจำนวนหม้อแปลงที่เข้าเกณฑ์ปรับลดขนาดจากมากที่สุดไปน้อยที่สุด (เรียงจากซ้ายไปขวา)
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {peaOffices.map((office) => {
-                const officeTrs = transformers.filter(t => t.feaOffice === office);
-                const eligibleOfficeTrs = officeTrs.filter(t => evaluateTransformerRightsizing(t).isEligible);
-                const pct = officeTrs.length > 0 ? Math.round((eligibleOfficeTrs.length / officeTrs.length) * 100) : 0;
-
+              {sortedPeaOffices.map(({ office, officeTrs, eligibleOfficeTrs, pct }) => {
                 return (
                   <div key={office} className="bg-white rounded-xl p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
                     <div>
@@ -2110,7 +2135,29 @@ export default function App() {
                           </td>
                           <td className="py-3 px-3 font-semibold text-slate-800 text-xs whitespace-nowrap">{office}</td>
                           <td className="py-3 px-3 font-mono font-bold text-emerald-700 text-xs whitespace-nowrap bg-emerald-50/30">
-                            {sourceTr.trCode}
+                            <button
+                              onClick={() => {
+                                setMapOffice(sourceTr.feaOffice);
+                                setMapRating('all');
+                                setMapSearchQuery(sourceTr.trCode);
+
+                                const lat = (sourceTr as any).latitude;
+                                const lng = (sourceTr as any).longitude;
+                                if (lat && lng && !isNaN(Number(lat)) && !isNaN(Number(lng))) {
+                                  setMapCenter({ lat: Number(lat), lng: Number(lng) });
+                                  setMapZoom(16);
+                                } else {
+                                  setMapCenter({ lat: 6.845, lng: 101.233 });
+                                  setMapZoom(12);
+                                }
+                                setActiveTab('map');
+                              }}
+                              className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-900 hover:underline cursor-pointer group"
+                              title="กดเพื่อดูตำแหน่งพิกัดบนแผนที่หม้อแปลง"
+                            >
+                              <span>{sourceTr.trCode}</span>
+                              <ExternalLink className="w-3.5 h-3.5 text-emerald-500 group-hover:text-emerald-800 transition-colors" />
+                            </button>
                           </td>
                           <td className="py-3 px-3 text-center font-mono text-xs whitespace-nowrap bg-emerald-50/30">
                             <strong className="text-emerald-600">{sourceTr.ratedKva}</strong> → <strong className="text-rose-600">{sourceEval.recommendedKva}</strong>
