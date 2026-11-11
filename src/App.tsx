@@ -31,6 +31,9 @@ import {
 } from 'lucide-react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
 import { TransformerRecord, PEA_OFFICES, generateInitialTransformers, evaluateTransformerRightsizing, formatPeaTransformerCode } from './data/mockTransformers';
 import { exportTransformersToExcel, exportTRMatchingToExcel } from './utils/exportExcel';
 import { parseCsvRows } from './utils/csvParser';
@@ -140,40 +143,109 @@ function MapLibreContainer({
       const evalRes = evaluateTransformerRightsizing(tr);
       if (!evalRes.isEligible) return;
 
-      // Custom Pin Marker Element
+      // Custom Pin Marker Element (separated container from visual pin to prevent transform overrides)
       const el = document.createElement('div');
-      el.className = 'custom-map-marker group';
-      el.style.width = '34px';
-      el.style.height = '34px';
-      el.style.borderRadius = '50%';
-      el.style.backgroundColor = '#059669';
-      el.style.border = '2px solid #047857';
-      el.style.color = '#ffffff';
-      el.style.display = 'flex';
-      el.style.alignItems = 'center';
-      el.style.justifyContent = 'center';
-      el.style.fontSize = '11px';
-      el.style.fontWeight = 'bold';
-      el.style.fontFamily = 'monospace';
-      el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.25)';
-      el.style.cursor = 'pointer';
-      el.style.transition = 'transform 0.15s ease-in-out';
-      el.title = `PEA: ${tr.trCode} (${tr.ratedKva} kVA) - ${tr.feaOffice}`;
-      el.innerText = `${tr.ratedKva}`;
+      el.className = 'custom-map-marker-container';
 
-      el.addEventListener('mouseenter', () => {
-        el.style.transform = 'scale(1.25)';
+      const pinInner = document.createElement('div');
+      pinInner.className = 'custom-map-marker-pin';
+      pinInner.style.width = '34px';
+      pinInner.style.height = '34px';
+      pinInner.style.borderRadius = '50%';
+      pinInner.style.backgroundColor = '#059669';
+      pinInner.style.border = '2px solid #047857';
+      pinInner.style.color = '#ffffff';
+      pinInner.style.display = 'flex';
+      pinInner.style.alignItems = 'center';
+      pinInner.style.justifyContent = 'center';
+      pinInner.style.fontSize = '11px';
+      pinInner.style.fontWeight = 'bold';
+      pinInner.style.fontFamily = 'monospace';
+      pinInner.style.boxShadow = '0 4px 10px rgba(0,0,0,0.25)';
+      pinInner.style.cursor = 'pointer';
+      pinInner.style.transition = 'transform 0.15s ease-in-out';
+      pinInner.title = `PEA: ${tr.trCode} (${tr.ratedKva} kVA) - ${tr.feaOffice}`;
+      pinInner.innerText = `${tr.ratedKva}`;
+
+      pinInner.addEventListener('mouseenter', () => {
+        pinInner.style.transform = 'scale(1.2)';
       });
-      el.addEventListener('mouseleave', () => {
-        el.style.transform = 'scale(1)';
+      pinInner.addEventListener('mouseleave', () => {
+        pinInner.style.transform = 'scale(1)';
       });
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onSelectTransformer(tr);
-      });
+
+      el.appendChild(pinInner);
+
+      // Construct Popup Content Element
+      const recommendedKva = evalRes.recommendedKva ?? '-';
+      const currentLoad = format2Decimals(tr.year3LoadPct);
+      const newLoad = evalRes.newLoadPct != null ? format2Decimals(evalRes.newLoadPct) : '-';
+
+      const popupNode = document.createElement('div');
+      popupNode.className = 'p-1 text-slate-800 font-sans min-w-[240px]';
+      popupNode.innerHTML = `
+        <div class="border-b border-slate-100 pb-2 mb-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              เข้าเกณฑ์ Rightsizing
+            </span>
+            <span class="text-[10px] text-slate-500 font-mono font-semibold">${tr.feaOffice}</span>
+          </div>
+          <h4 class="text-sm font-bold text-slate-900 mt-1 flex items-center gap-1.5">
+            <span>PEA: ${tr.trCode}</span>
+          </h4>
+          <p class="text-[11px] text-slate-600 mt-0.5">
+            สังกัด: <strong class="text-slate-800">${tr.feaOffice}</strong> (${tr.feeder || 'F-1'})
+          </p>
+        </div>
+
+        <div class="space-y-1.5 text-xs">
+          <div class="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200">
+            <span class="text-slate-600 text-[11px]">ขนาดพิกัด (kVA):</span>
+            <span class="font-bold text-slate-800 font-mono flex items-center gap-1">
+              <span class="text-slate-400 line-through">${tr.ratedKva} kVA</span>
+              <span class="text-emerald-700 font-extrabold">➔ ${recommendedKva} kVA</span>
+            </span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-1.5">
+            <div class="bg-amber-50 p-2 rounded-lg border border-amber-200">
+              <div class="text-[10px] text-amber-800 font-semibold">โหลดปัจจุบัน</div>
+              <div class="text-xs font-bold text-amber-900 font-mono mt-0.5">${currentLoad}%</div>
+            </div>
+            <div class="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+              <div class="text-[10px] text-emerald-800 font-semibold">โหลดใหม่ (&lt;50%)</div>
+              <div class="text-xs font-bold text-emerald-900 font-mono mt-0.5">${newLoad}%</div>
+            </div>
+          </div>
+
+          ${tr.location ? `<div class="text-[10px] text-slate-500 truncate pt-0.5">📍 ${tr.location}</div>` : ''}
+        </div>
+
+        <button type="button" class="mt-2.5 w-full py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium text-xs rounded-md shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer select-btn">
+          <span>ดูรายละเอียด / จำลองการลดขนาด</span>
+          <span>➔</span>
+        </button>
+      `;
+
+      const selectBtn = popupNode.querySelector('.select-btn');
+      if (selectBtn) {
+        selectBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          onSelectTransformer(tr);
+        });
+      }
+
+      const popup = new maplibregl.Popup({
+        offset: 25,
+        closeButton: true,
+        closeOnClick: false,
+        maxWidth: '300px'
+      }).setDOMContent(popupNode);
 
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([lng, lat])
+        .setPopup(popup)
         .addTo(map);
 
       markersRef.current.push(marker);
@@ -1381,7 +1453,7 @@ export default function App() {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">หม้อแปลงเข้าเกณฑ์ลดขนาด (Rightsizing Targets)</h2>
                 <p className="text-xs text-slate-500">
-                  เงื่อนไข: % โหลด &lt; 30% ติดต่อกัน 3 ปี, เมื่อลดขนาดแล้ว % โหลดใหม่ต้องน้อยกว่า 50%, และ<strong>ไม่เอาหม้อแปลงที่สถานที่ติดตั้งมีคำว่า "จัดสรร", "หมู่บ้าน" หรือ "โครงการ"</strong> เข้ามาคำนวณในระบบนี้
+                  เงื่อนไข: % โหลด &lt; 30% ติดต่อกัน 3 ปี, เมื่อลดขนาดแล้ว % โหลดใหม่ต้องน้อยกว่า 50%, และ<strong>ไม่เอาหม้อแปลงที่สถานที่ติดตั้งมีคำว่า "จัดสรร", "หมู่บ้าน", "โครงการ", "สถานีอัดประจุ" หรือ "EV"</strong> เข้ามาคำนวณในระบบนี้
                 </p>
                 <div className="flex flex-wrap items-center gap-2.5 mt-3">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-800 border border-slate-200 shadow-2xs">
