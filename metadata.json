@@ -1,0 +1,7 @@
+{
+  "name": "PEA Transformer Rightsizing Dashboard",
+  "description": "ระบบวิเคราะห์และวางแผนปรับลดขนาดหม้อแปลงระบบจำหน่ายไฟฟ้า 100, 160, 250 kVA ที่มีโหลดน้อยกว่า 30% ติดต่อกัน 3 ปี",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
